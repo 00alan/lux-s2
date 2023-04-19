@@ -35,7 +35,7 @@ class Setting:
         self.N_second_ice_cutoff = 10 #more than N nsquares away from factory center and we don't care about the 2nd ice anymore
         self.second_ice_default_penalty = 1.3
         self.ice2_vs_ice1_mult = 1/(self.N_second_ice_cutoff * self.second_ice_default_penalty + 1) #this way if a factory doesnt have a cutoff and receives the default penalty then it still is only a tie breaker since <1class Reference:
-
+        self.bid_normalizer = 2
 
 class Agent():
 
@@ -152,15 +152,15 @@ class Agent():
                 #corresponding_si1_index.append(list(sorted_indexes_1).index(flattened_i))
 
             _1st_vs_2nd = (nol_scores[0] - nol_scores[1]) + self.setting.second_factory_mult * (nol_scores[2] - nol_scores[3])
-            _1st_vs_2nd *= -1 
+            _1st_vs_2nd *= -1 * self.setting.bid_normalizer
             bid = None
             if abs(_1st_vs_2nd) < 0.5:
                 bid = 0
             elif 0.5 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1:
                 bid = round(_1st_vs_2nd*10) - 4 #bid 1 if 0.5, bid 6 if 0.99
-            elif 1 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.5: #we bid non-ten values up to fifteen, then its just 20, 30, 40
+            elif 1 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.6: #we bid non-ten values up to sixteen, then its just 20, 30, 40
                 bid = round(_1st_vs_2nd*10)
-            elif 1.5 <= abs(_1st_vs_2nd):
+            elif 1.6 <= abs(_1st_vs_2nd):
                 bid = round(_1st_vs_2nd) * 10
             self.bid = bid
             return dict(faction="AlphaStrike", bid = bid)
