@@ -154,13 +154,25 @@ class Agent():
             _1st_vs_2nd = (nol_scores[0] - nol_scores[1]) + self.setting.second_factory_mult * (nol_scores[2] - nol_scores[3])
             _1st_vs_2nd *= -1 * self.setting.bid_normalizer
             bid = None
-            if abs(_1st_vs_2nd) < 0.5:
-                bid = 0
-            elif 0.5 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1:
-                bid = round(_1st_vs_2nd*10) - 4 #bid 1 if 0.5, bid 6 if 0.99
-            elif 1 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.6: #we bid non-ten values up to sixteen, then its just 20, 30, 40
-                bid = round(_1st_vs_2nd*10)
-            elif 1.6 <= abs(_1st_vs_2nd):
+            if 0.3 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.5:
+                bid = 1
+            elif 0.5 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.7:
+                bid = 2
+            elif 0.7 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.85:
+                bid = 3
+            elif 0.85 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1:
+                bid = 4
+            elif 1 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.5: #we bid non-ten values up to sixteen, then its just 20, 30, 40
+                bid = 10
+            elif 1.4 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.6: #we bid non-ten values up to sixteen, then its just 20, 30, 40
+                bid = 11
+            elif 1.6 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.8: #we bid non-ten values up to sixteen, then its just 20, 30, 40
+                bid = 12
+            elif 1.8 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.9: #we bid non-ten values up to sixteen, then its just 20, 30, 40
+                bid = 13
+            elif 1.9 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 2: #we bid non-ten values up to sixteen, then its just 20, 30, 40
+                bid = 14
+            elif 2 <= abs(_1st_vs_2nd):
                 bid = round(_1st_vs_2nd) * 10
             self.bid = bid
             return dict(faction="AlphaStrike", bid = bid)
