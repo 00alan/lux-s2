@@ -154,9 +154,13 @@ class Agent():
             _1st_vs_2nd = (nol_scores[0] - nol_scores[1]) + self.setting.second_factory_mult * (nol_scores[2] - nol_scores[3])
             _1st_vs_2nd *= -1 
             bid = None
-            if abs(_1st_vs_2nd) < 1.5: #we bid non-ten values up to fifteen, then its just 20, 30, 40
+            if abs(_1st_vs_2nd) < 0.5:
+                bid = 0
+            elif 0.5 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1:
+                bid = round(_1st_vs_2nd*10) - 4 #bid 1 if 0.5, bid 6 if 0.99
+            elif 1 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.5: #we bid non-ten values up to fifteen, then its just 20, 30, 40
                 bid = round(_1st_vs_2nd*10)
-            else:
+            elif 1.5 <= abs(_1st_vs_2nd):
                 bid = round(_1st_vs_2nd) * 10
             self.bid = bid
             return dict(faction="AlphaStrike", bid = bid)
