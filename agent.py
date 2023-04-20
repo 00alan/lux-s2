@@ -241,7 +241,7 @@ class Agent():
 
             bid = 0
             if fair_val%10 > 0:
-                bid = fair_val - fair_val%10 + max(0, F%10 - self.setting.discount_greed)
+                bid = fair_val - fair_val%10 + max(0, fair_val%10 - self.setting.discount_greed)
             elif fair_val%10 == 0:
                 bid = max(0, fair_val - self.setting.discount_greed)
             bid = min(self.setting.max_encountered_bid + 1, round(bid))
