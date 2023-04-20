@@ -234,6 +234,7 @@ class Agent():
             #another thing: of course we don't have this magic fair value function, so have to do a very
             #rough estimate of it using _1st_vs_2nd as the input param
             def magic_f(_1st_vs_2nd):
+                game_state = obs_to_game_state(step, self.env_cfg, obs)
                 n_factories = game_state.board.factories_per_team
                 return _1st_vs_2nd * self.setting.magic_mult * n_factories**self.setting.n_factories_importance_exp
             fair_val = magic_f(_1st_vs_2nd)
