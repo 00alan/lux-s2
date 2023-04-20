@@ -35,7 +35,10 @@ class Setting:
         self.N_second_ice_cutoff = 10 #more than N nsquares away from factory center and we don't care about the 2nd ice anymore
         self.ice2_vs_ice1_mult = self.ore1_vs_ice1_mult * 1/(self.N_second_ice_cutoff + 1) #this way if a factory doesnt have a cutoff and receives the default penalty then it still is only a tie breaker since <1class Reference:
         self.territory_vs_iceore_mult = 1
-        self.bid_mult = 2
+        self.discount_greed = 5
+        self.max_encountered_bid = 40
+        self.n_factories_importance_exp = 0.5
+        self.magic_mult = 20
 
 class Agent():
 
@@ -209,28 +212,39 @@ class Agent():
             _1st_vs_2nd_territory = 0
             
             _1st_vs_2nd = -1*_1st_vs_2nd_ice_ore + _1st_vs_2nd_territory*self.setting.territory_vs_iceore_mult
-            _1st_vs_2nd *= self.setting.bid_mult
-            bid = None
-            if 0.4 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.6:
-                bid = 1
-            elif 0.6 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.8:
-                bid = 2
-            elif 0.8 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.9:
-                bid = 3
-            elif 0.9 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1:
-                bid = 4
-            elif 1 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.5: #we bid non-ten values up to sixteen, then its just 20, 30, 40
-                bid = 10
-            elif 1.4 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.6: #we bid non-ten values up to sixteen, then its just 20, 30, 40
-                bid = 11
-            elif 1.6 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.8: #we bid non-ten values up to sixteen, then its just 20, 30, 40
-                bid = 12
-            elif 1.8 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.9: #we bid non-ten values up to sixteen, then its just 20, 30, 40
-                bid = 13
-            elif 1.9 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 2: #we bid non-ten values up to sixteen, then its just 20, 30, 40
-                bid = 14
-            elif 2 <= abs(_1st_vs_2nd):
-                bid = round(_1st_vs_2nd) * 10
+            
+            #the fair bid value would be the amount F of water+metal where starting with F less water
+            #       (and knowing we have N factories)
+            #   and F less metal, and ceil(F/10) less initial light robots is exactly compensated by the 
+            #   difference in going first vs second. this happens when probability of winning match with F 
+            #   less etc and going first is the same as probability of winning match without paying any bid,
+            #   but going second. however, we would never want to actually bid our idea of fair bid value,
+            #   because this move has ev zero. instead we want to bid less than our fair value estimation
+            #   and hope that we get to play first at a discount. however if we are too greedy then the
+            #   opponent maybe be able to play first still at a discount, just at less of a discount. 
+            #   so we don't want to be too greedy. a practical approach without doing extensive tuning
+            #   may be bidding where F%10 > 0: F - (F % 10) + max( (F % 10) - 5, 0 )
+            #                  where F%10 = 0: F - 10 + 5
+            #   in this situation if we think fair value is 19, we'll bid 14, if we think is 20 we'll bid 15
+            #   if we think is 13 we'll bid 10. if we think is 8 we'll bid 3.
+            #   in the last case, we win if opponent bids > 8, we lose if opponent bids 4-7, and we win if
+            #   opponent bids <3. if opponent bids 8 or 3 we can say its a tie
+
+
+            #another thing: of course we don't have this magic fair value function, so have to do a very
+            #rough estimate of it using _1st_vs_2nd as the input param
+            def magic_f(_1st_vs_2nd):
+                n_factories = game_state.board.factories_per_team
+                return _1st_vs_2nd * self.setting.magic_mult * n_factories**self.setting.n_factories_importance_exp
+            fair_val = magic_f(_1st_vs_2nd)
+
+            bid = 0
+            if fair_val%10 > 0:
+                bid = fair_val - fair_val%10 + max(0, F%10 - self.setting.discount_greed)
+            elif fair_val%10 == 0:
+                bid = max(0, fair_val - self.setting.discount_greed)
+            bid = min(self.setting.max_encountered_bid + 1, round(bid))
+
             self.bid = bid
             return dict(faction="AlphaStrike", bid = bid)
         
