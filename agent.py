@@ -33,9 +33,9 @@ class Setting:
         # commented out below line because territory metric should take care of this when neccessary
         #factory_border_buffer = 3
         self.N_second_ice_cutoff = 10 #more than N nsquares away from factory center and we don't care about the 2nd ice anymore
-        self.second_ice_default_penalty = 1.3
-        self.ice2_vs_ice1_mult = 1/(self.N_second_ice_cutoff * self.second_ice_default_penalty + 1) #this way if a factory doesnt have a cutoff and receives the default penalty then it still is only a tie breaker since <1class Reference:
-        self.bid_normalizer = 2
+        self.ice2_vs_ice1_mult = self.ore1_vs_ice1_mult * 1/(self.N_second_ice_cutoff + 1) #this way if a factory doesnt have a cutoff and receives the default penalty then it still is only a tie breaker since <1class Reference:
+        self.territory_vs_iceore_mult = 1
+        self.bid_mult = 2
 
 class Agent():
 
@@ -49,10 +49,11 @@ class Agent():
 
     def early_setup(self, step: int, obs, remainingOverageTime: int = 60):
 
-        def manhattan_distance(binary_mask):
+        def board_manhattan_distance(binary_mask):
             # Get the distance map from every pixel to the nearest positive pixel
             distance_map = distance_transform_cdt(binary_mask, metric='taxicab')
             return distance_map
+
         def generate_nsquares(point, n):
             x, y = point
             nsquares = []
@@ -61,17 +62,48 @@ class Agent():
                     if abs(i) == n or abs(j) == n:
                         nsquares.append((x+i, y+j))
             return nsquares
+
         def generate_pairings(lst):
             pairings = []
             for i, j in itertools.combinations(lst, 2):
                 pairings.append((i,j))
             return pairings
 
+        def bipartite_pairings(L, R):
+            pairings = set()
+            for l in L:
+                for r in R:
+                    pairings.add((l, r))
+            return pairings
+
+        def manh(point1, point2):
+            return abs(point1[0] - point2[0]) + abs(point1[1] - point2[1])
+
+        def nearest_point(point, points):
+            nearest = points[0]
+            nearest_distance = manh(point, nearest)
+            for p in points[1:]:
+                distance = manh(point, p)
+                if distance < nearest_distance:
+                    nearest = p
+                    nearest_distance = distance
+            return nearest
+
+        def n_dist_to_nearest(A, n):
+            B = set()
+            for x in range(min(p[0] for p in A) - n, max(p[0] for p in A) + n+1):
+                for y in range(min(p[1] for p in A) - n, max(p[1] for p in A) + n+1):
+                    point = (x, y)
+                    nearest = nearest_point(point, A)
+                    if manh(point, nearest) == n:
+                        B.add(point)
+            return B
+
         def score_spawn_locations(obs): #only using proximity to nearest single ice and ore
             board_ice = obs["board"]["ice"]
             board_ore = obs["board"]["ore"]
-            dist_ice = manhattan_distance(1 - board_ice)
-            dist_ore = manhattan_distance(1 - board_ore)
+            dist_ice = board_manhattan_distance(1 - board_ice)
+            dist_ore = board_manhattan_distance(1 - board_ore)
             valid_spawns = obs["board"]["valid_spawns_mask"] 
             factory_dist_ice, factory_dist_ore = [], []
             for x in range(48):
@@ -96,26 +128,46 @@ class Agent():
                 x,y = np.unravel_index(i, (48, 48))
                 dist_ice1 = dist_ice[x][y]
                 dist_ice2 = None
-                ltoet_n_away = [] # ltoet <=
+                factory_tiles = generate_nsquares([x,y], 1)
+                
+                less_than_n_away = []
                 for n in range(0, self.setting.N_second_ice_cutoff): #if second ice is more than N nsquares away it kinda doesnt matter, can just add some constant penalty
+                    if dist_ice2:
+                        break
+                    n_away = []
+                    
                     if n < 2: #these are factory tiles
                         continue
-                    for _x,_y in generate_nsquares([x,y], n):
-                        if (_x < 0 or _y < 0) or (_x >= 48 or _y >= 48): 
-                            continue
-                        if board_ice[_x][_y] == 1:
-                            ltoet_n_away.append((_x,_y))
-                    if len(ltoet_n_away) >= 2:
-                        for ice1, ice2 in generate_pairings(ltoet_n_away):
-                            if np.sum(np.abs(np.array(ice1)-np.array(ice2))) > 2:
-                                if np.sum(np.abs(np.array(ice1)-np.array([x,y]))) == dist_ice1: #our first ice must be the closest ice(s)
-                                    dist_ice2 = np.sum(np.abs( np.array(ice2)-np.array([x,y]) ))
-                                    assert dist_ice1 <= dist_ice2
+                    if n == 2: #edge case where ltoet_n_away is empty
+                        for _x,_y in n_dist_to_nearest(factory_tiles, n):
+                            if (_x < 0 or _y < 0) or (_x >= 48 or _y >= 48): 
+                                continue
+                            if board_ice[_x][_y] == 1:
+                                n_away.append((_x,_y))  
+                        if len(n_away) >= 2:
+                            for ice1, ice2 in generate_pairings(n_away):
+                                if manh(ice1, ice2) > 2:
+                                    dist_ice2 = manh(ice2, (x,y))
+                        for loc in n_away:
+                            less_than_n_away.append(loc)
+                    else:            
+                        for _x,_y in n_dist_to_nearest(factory_tiles, n):
+                            if (_x < 0 or _y < 0) or (_x >= 48 or _y >= 48): 
+                                continue
+                            if board_ice[_x][_y] == 1:
+                                n_away.append((_x,_y))  
+                            if len(n_away) >= 1:
+                                for ice1, ice2 in bipartite_pairings(less_than_n_away, n_away):
+                                    if manh(ice1, ice2) > 2:
+                                        dist_ice2 = manh(ice2, (x,y))
+                            for loc in n_away:
+                                less_than_n_away.append(loc)   
+                #finished going from 0 to cutoff
                 if not dist_ice2:
-                    dist_ice2 = self.setting.N_second_ice_cutoff * self.setting.second_ice_default_penalty
+                    dist_ice2 = self.setting.N_second_ice_cutoff+1
                 factory_dist_ice2.append(dist_ice2)
             for i in sorted_indexes_1[less:]:
-                dist_ice2 = self.setting.N_second_ice_cutoff * self.setting.second_ice_default_penalty
+                dist_ice2 = self.setting.N_second_ice_cutoff+1
                 factory_dist_ice2.append(dist_ice2)
             assert len(factory_dist_ice2) == len(scores)
 
@@ -150,17 +202,22 @@ class Agent():
                 nol_scores.append(score)
                 flattened_i = loc[0]*48 + loc[1]
                 #corresponding_si1_index.append(list(sorted_indexes_1).index(flattened_i))
-
-            _1st_vs_2nd = (nol_scores[0] - nol_scores[1]) + self.setting.second_factory_mult * (nol_scores[2] - nol_scores[3])
-            _1st_vs_2nd *= -1 * self.setting.bid_normalizer
+            _1st_vs_2nd_ice_ore = (nol_scores[0] - nol_scores[1]) + self.setting.second_factory_mult * (nol_scores[2] - nol_scores[3])
+            
+            #do territory stuff
+            #
+            _1st_vs_2nd_territory = 0
+            
+            _1st_vs_2nd = -1*_1st_vs_2nd_ice_ore + _1st_vs_2nd_territory*self.setting.territory_vs_iceore_mult
+            _1st_vs_2nd *= self.setting.bid_mult
             bid = None
-            if 0.3 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.5:
+            if 0.4 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.6:
                 bid = 1
-            elif 0.5 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.7:
+            elif 0.6 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.8:
                 bid = 2
-            elif 0.7 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.85:
+            elif 0.8 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 0.9:
                 bid = 3
-            elif 0.85 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1:
+            elif 0.9 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1:
                 bid = 4
             elif 1 <= abs(_1st_vs_2nd) and abs(_1st_vs_2nd) < 1.5: #we bid non-ten values up to sixteen, then its just 20, 30, 40
                 bid = 10
