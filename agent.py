@@ -23,86 +23,88 @@ class My_Ship:
         self.target = None
         self.target_priority = 0
 
-
-
-
 class Setting:
     def __init__(self):
+
+        #related to spawn locations valuation
         self.ore1_vs_ice1_mult = 1/2
-        self.second_factory_mult = 1/3
-        # commented out below line because territory metric should take care of this when neccessary
-        #factory_border_buffer = 3
         self.N_second_ice_cutoff = 10 #more than N nsquares away from factory center and we don't care about the 2nd ice anymore
         self.ice2_vs_ice1_mult = self.ore1_vs_ice1_mult * 1/(self.N_second_ice_cutoff + 1) #this way if a factory doesnt have a cutoff and receives the default penalty then it still is only a tie breaker since <1class Reference:
         self.territory_vs_iceore_mult = 1
+        self.successive_factory_mult = 2/3
+
+        #bid stuff
         self.discount_greed = 5
         self.max_encountered_bid = 40
         self.n_factories_importance_exp = 0.5
-        self.magic_mult = 20
+        self.magic_mult = 30
+        
+def board_manhattan_distance(binary_mask):
+    # Get the distance map from every pixel to the nearest positive pixel
+    distance_map = distance_transform_cdt(binary_mask, metric='taxicab')
+    return distance_map
+def generate_nsquares(point, n):
+    x, y = point
+    nsquares = []
+    for i in range(-n, n+1):
+        for j in range(-n, n+1):
+            if abs(i) == n or abs(j) == n:
+                nsquares.append((x+i, y+j))
+    return nsquares
+def generate_pairings(lst):
+    pairings = []
+    for i, j in itertools.combinations(lst, 2):
+        pairings.append((i,j))
+    return pairings
+def bipartite_pairings(L, R):
+    pairings = set()
+    for l in L:
+        for r in R:
+            pairings.add((l, r))
+    return pairings
+def manh(point1, point2):
+    return abs(point1[0] - point2[0]) + abs(point1[1] - point2[1])
+def nearest_point(point, points):
+    nearest = points[0]
+    nearest_distance = manh(point, nearest)
+    for p in points[1:]:
+        distance = manh(point, p)
+        if distance < nearest_distance:
+            nearest = p
+            nearest_distance = distance
+    return nearest
+def n_dist_to_nearest(A, n):
+    B = set()
+    for x in range(min(p[0] for p in A) - n, max(p[0] for p in A) + n+1):
+        for y in range(min(p[1] for p in A) - n, max(p[1] for p in A) + n+1):
+            point = (x, y)
+            nearest = nearest_point(point, A)
+            if manh(point, nearest) == n:
+                B.add(point)
+    return B
 
 class Agent():
-
     def __init__(self, player: str, env_cfg: EnvConfig) -> None:
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
         np.random.seed(0)
         self.env_cfg: EnvConfig = env_cfg
         self.setting: Setting = Setting()
+        self.n_factories_initial = None
         self.bid: int = 0
 
+    #if getting runtime error in factory placement, decrease the 'less' param
     def early_setup(self, step: int, obs, remainingOverageTime: int = 60):
 
-        def board_manhattan_distance(binary_mask):
-            # Get the distance map from every pixel to the nearest positive pixel
-            distance_map = distance_transform_cdt(binary_mask, metric='taxicab')
-            return distance_map
-
-        def generate_nsquares(point, n):
-            x, y = point
-            nsquares = []
-            for i in range(-n, n+1):
-                for j in range(-n, n+1):
-                    if abs(i) == n or abs(j) == n:
-                        nsquares.append((x+i, y+j))
-            return nsquares
-
-        def generate_pairings(lst):
-            pairings = []
-            for i, j in itertools.combinations(lst, 2):
-                pairings.append((i,j))
-            return pairings
-
-        def bipartite_pairings(L, R):
-            pairings = set()
-            for l in L:
-                for r in R:
-                    pairings.add((l, r))
-            return pairings
-
-        def manh(point1, point2):
-            return abs(point1[0] - point2[0]) + abs(point1[1] - point2[1])
-
-        def nearest_point(point, points):
-            nearest = points[0]
-            nearest_distance = manh(point, nearest)
-            for p in points[1:]:
-                distance = manh(point, p)
-                if distance < nearest_distance:
-                    nearest = p
-                    nearest_distance = distance
-            return nearest
-
-        def n_dist_to_nearest(A, n):
-            B = set()
-            for x in range(min(p[0] for p in A) - n, max(p[0] for p in A) + n+1):
-                for y in range(min(p[1] for p in A) - n, max(p[1] for p in A) + n+1):
-                    point = (x, y)
-                    nearest = nearest_point(point, A)
-                    if manh(point, nearest) == n:
-                        B.add(point)
-            return B
-
-        def score_spawn_locations(obs): #only using proximity to nearest single ice and ore
+        game_state = obs_to_game_state(step, self.env_cfg, obs)
+        self.n_factories_initial = game_state.board.factories_per_team
+        
+        if len(game_state.teams) == 0:
+            self.all_factories_to_place = self.n_factories_initial*2
+        else:
+            self.all_factories_to_place = game_state.teams[self.player].factories_to_place + game_state.teams[self.opp_player].factories_to_place
+        
+        def ice1ore1_scores(obs):
             board_ice = obs["board"]["ice"]
             board_ore = obs["board"]["ore"]
             dist_ice = board_manhattan_distance(1 - board_ice)
@@ -117,28 +119,27 @@ class Agent():
                         continue
                     closest_ice = min([dist_ice[_x, _y] for _x, _y in generate_nsquares([x,y], 1)])
                     factory_dist_ice.append(closest_ice)
-
                     closest_ore = min([dist_ore[_x, _y] for _x, _y in generate_nsquares([x,y], 1)])
                     factory_dist_ore.append(closest_ore)    
-
             scores = factory_dist_ice + np.array(factory_dist_ore) * self.setting.ore1_vs_ice1_mult
-            #print(48*48, len(scores))
             sorted_indexes_1 = np.argsort(scores)
-
-            less = 80 #number of locations we will do computations for 2nd closest ice
+            return scores, sorted_indexes_1
+        def with_ice2_scores(obs, scores, sorted_indexes_1, less = 80):
+            board_ice = obs["board"]["ice"]
+            board_ore = obs["board"]["ore"]
+            dist_ice = board_manhattan_distance(1 - board_ice)
+            dist_ore = board_manhattan_distance(1 - board_ore)
             factory_dist_ice2 = []
             for i in sorted_indexes_1[:less]:
                 x,y = np.unravel_index(i, (48, 48))
                 dist_ice1 = dist_ice[x][y]
                 dist_ice2 = None
                 factory_tiles = generate_nsquares([x,y], 1)
-                
                 less_than_n_away = []
                 for n in range(0, self.setting.N_second_ice_cutoff): #if second ice is more than N nsquares away it kinda doesnt matter, can just add some constant penalty
                     if dist_ice2:
                         break
                     n_away = []
-                    
                     if n < 2: #these are factory tiles
                         continue
                     if n == 2: #edge case where ltoet_n_away is empty
@@ -173,46 +174,59 @@ class Agent():
                 dist_ice2 = self.setting.N_second_ice_cutoff+1
                 factory_dist_ice2.append(dist_ice2)
             assert len(factory_dist_ice2) == len(scores)
+            #print(factory_dist_ice[:20])
+            #print(factory_dist_ice2[:20])
 
+            #update scores to reflect distances to ice2
             for __ in range(48*48):
+                #break
                 i = sorted_indexes_1[__] #because we indexed factory_dist_ice2 differently so we dont have to compute for all 48*48
-                #print(scores[i], factory_dist_ice2[_])
+                #print(scores[i], factory_dist_ice2[__])
                 scores[i] += factory_dist_ice2[__] * self.setting.ice2_vs_ice1_mult
-            return scores
-
-        if step == 0:
-            scores = score_spawn_locations(obs)
-            sorted_indexes_2 = np.argsort(scores)
-            no_overlap, nol_scores = [], [] 
-            #corresponding_si1_index = [] #corresponding to sorted_indexes_1
+            #sorted_indexes_2 to reflect new scores accounting for ice2
+            sorted_indexes_2 = np.argsort(scores) 
+            return scores, sorted_indexes_2
+        def no_overlap(scores, sorted_indexes_2, sorted_indexes_1, topN):
+            nol_locations, nol_scores = [], [] 
+            corresponding_si1_index = [] #corresponding to sorted_indexes_1, just for bookeeping, used to see that ~80 is safe for 'less' parameter above
             count = -1
-            #while len(no_overlap) < 2*n_factories:
-            while len(no_overlap) < 4:
+            while len(nol_locations) < topN:
                 count += 1
                 i = sorted_indexes_2[count]
                 loc = np.unravel_index(i, (48, 48))
                 score = scores[i]
-                if len(no_overlap) == 0:
-                    no_overlap.append(loc)
+                if len(nol_locations) == 0:
+                    nol_locations.append(loc)
                     nol_scores.append(score)
                     flattened_i = loc[0]*48 + loc[1]
-                    #corresponding_si1_index.append(list(sorted_indexes_1).index(flattened_i))
+                    corresponding_si1_index.append(list(sorted_indexes_1).index(flattened_i))
                     continue
-                if any([np.sum(np.abs(np.array(loc)-np.array(factory))) < 6 for factory in no_overlap]):
+                if any([np.sum(np.abs(np.array(loc)-np.array(factory))) < 6 for factory in nol_locations]):
                     scores[i] = 999 #this is only here to show results in the print loop below, once factories start getting placed can mess things up
                     continue
-                no_overlap.append(loc)
+                nol_locations.append(loc)
                 nol_scores.append(score)
                 flattened_i = loc[0]*48 + loc[1]
-                #corresponding_si1_index.append(list(sorted_indexes_1).index(flattened_i))
-            _1st_vs_2nd_ice_ore = (nol_scores[0] - nol_scores[1]) + self.setting.second_factory_mult * (nol_scores[2] - nol_scores[3])
-            
-            #do territory stuff
-            #
-            _1st_vs_2nd_territory = 0
-            
-            _1st_vs_2nd = -1*_1st_vs_2nd_ice_ore + _1st_vs_2nd_territory*self.setting.territory_vs_iceore_mult
-            
+                corresponding_si1_index.append(list(sorted_indexes_1).index(flattened_i))
+            for i in sorted_indexes_2[:count+1]:
+                #print(np.unravel_index(i, (48, 48)), factory_dist_ice[i], factory_dist_ore[i], scores[i])
+                break
+            return nol_locations, nol_scores, corresponding_si1_index
+        def spawn_locations(obs): #only using proximity to nearest single ice and ore
+            scores, sorted_indexes_1 = ice1ore1_scores(obs)
+            scores, sorted_indexes_2 = with_ice2_scores(obs, scores, sorted_indexes_1, 200)
+            nol_locations, nol_scores, corresponding_si1_index = no_overlap(scores, sorted_indexes_2, sorted_indexes_1, self.all_factories_to_place)
+            return nol_locations, nol_scores
+        def nol_to_1stvs2nd(nol_scores): #only called at step == 0
+            assert len(nol_scores) == self.n_factories_initial * 2
+            _1st_vs_2nd = 0
+            for i in range(int(len(nol_scores)/2)):
+                _1st_vs_2nd += (nol_scores[i] - nol_scores[i+1]) * self.setting.successive_factory_mult**i
+            return _1st_vs_2nd #more negative = more of an advantage to go 1st
+
+
+
+        if step == 0:
             #the fair bid value would be the amount F of water+metal where starting with F less water
             #       (and knowing we have N factories)
             #   and F less metal, and ceil(F/10) less initial light robots is exactly compensated by the 
@@ -230,49 +244,46 @@ class Agent():
             #   in the last case, we win if opponent bids > 8, we lose if opponent bids 4-7, and we win if
             #   opponent bids <3. if opponent bids 8 or 3 we can say its a tie
 
-
             #another thing: of course we don't have this magic fair value function, so have to do a very
             #rough estimate of it using _1st_vs_2nd as the input param
-            def magic_f(_1st_vs_2nd):
-                game_state = obs_to_game_state(step, self.env_cfg, obs)
-                n_factories = game_state.board.factories_per_team
-                return _1st_vs_2nd * self.setting.magic_mult * n_factories**self.setting.n_factories_importance_exp
+
+            nol_locations, nol_scores = spawn_locations(obs)
+            _1st_vs_2nd = nol_to_1stvs2nd(nol_scores)
+
+            def magic_f(_1st_vs_2nd): #turns _1st_vs_2nd difference into our estimate of fair value. initially we will just scale _1st_vs_2nd s.t. our ratio of games where we bid zero or bid high values seems reasonable
+                return _1st_vs_2nd * self.setting.magic_mult * self.n_factories_initial**self.setting.n_factories_importance_exp
+            def fairval_to_bid(fair_val): #returns bid amount given a fair value amount
+                bid = 0
+                if fair_val%10 > 0:
+                    bid = fair_val - fair_val%10 + max(0, fair_val%10 - self.setting.discount_greed)
+                elif fair_val%10 == 0:
+                    bid = max(0, fair_val - self.setting.discount_greed)
+                else:
+                    None
+                return min(self.setting.max_encountered_bid + 1, round(bid))
+
             fair_val = magic_f(_1st_vs_2nd)
-
-            bid = 0
-            if fair_val%10 > 0:
-                bid = fair_val - fair_val%10 + max(0, fair_val%10 - self.setting.discount_greed)
-            elif fair_val%10 == 0:
-                bid = max(0, fair_val - self.setting.discount_greed)
-            bid = min(self.setting.max_encountered_bid + 1, round(bid))
-
-            self.bid = bid
-            return dict(faction="AlphaStrike", bid = bid)
+            self.bid = fairval_to_bid(fair_val)
+            return dict(faction="AlphaStrike", bid = self.bid)
         
         else:
-            game_state = obs_to_game_state(step, self.env_cfg, obs)
-            # factory placement period
 
             # how much water and metal you have in your starting pool to give to new factories
             water_left = game_state.teams[self.player].water
             metal_left = game_state.teams[self.player].metal
 
             # how many factories you have left to place
-            factories_to_place = game_state.teams[self.player].factories_to_place
-            
-            # initial factories
-            n_factories = game_state.board.factories_per_team
+            my_factories_to_place = game_state.teams[self.player].factories_to_place
 
             # whether it is your turn to place a factory
             my_turn_to_place = my_turn_to_place_factory(game_state.teams[self.player].place_first, step)
-            if factories_to_place > 0 and my_turn_to_place:
-                scores = score_spawn_locations(obs)
-                sorted_indexes_2 = np.argsort(scores)
+            if my_factories_to_place > 0 and my_turn_to_place:
+                scores, sorted_indexes_1 = ice1ore1_scores(obs)
+                scores, sorted_indexes_2 = with_ice2_scores(obs, scores, sorted_indexes_1, 200)
                 spawn_loc = np.unravel_index(sorted_indexes_2[0], (48, 48))
-                if factories_to_place == n_factories: #this is our first factory
-                    #the idea here is our first factory will have good proximity to ice/ore so will be
-                    #   able to replenish resources easier
-                    if self.bid == 0:
+                if my_factories_to_place == self.n_factories_initial: #this is our first factory
+                    #the idea here is our first factory will have good proximity to ice/ore so will be able to replenish resources easier
+                    if self.bid == 0: #so we don't spawn first factory with zero metal and water
                         return dict(spawn=spawn_loc, metal=150, water=150)
                     else:
                         return dict(spawn=spawn_loc, metal=metal_left%150, water=water_left%150)
